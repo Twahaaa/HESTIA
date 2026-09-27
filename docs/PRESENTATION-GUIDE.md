@@ -242,8 +242,18 @@ contracts, error codes and a walkthrough.
 
 ## 8. A demo that does not overclaim
 
-Use the synthetic workspace, because it is reproducible and needs neither
-an API key nor the bulk datasets:
+For a **live Groq demonstration**, use the prepared real evidence workspace,
+not the synthetic seed below. The redesigned UI opens to the case queue. Choose
+a real session, select **Run with Groq…**, confirm the outbound hosted request,
+and watch the run activity card and recorded evidence-tool timeline. An
+incomplete run has no verdict. The **Groq pilot** navigation view is a frozen,
+read-only six-case historical result with its uncertainty and confounds. It is
+not the result of the case currently on screen; see [DEMO.md](DEMO.md) for the
+live-workspace setup and [EVALUATION.md](EVALUATION.md) for the pilot figures.
+
+The optional local scripted walkthrough is reproducible without provider
+availability. Use the synthetic workspace; it needs neither an API key nor the
+bulk datasets:
 
 ```sh
 docker compose up --build -d
@@ -252,9 +262,9 @@ docker compose exec app hestia demo-seed
 
 Open <http://localhost:8000>. The demo seed refuses to overwrite an unrelated
 artifact store. Follow [DEMO.md](DEMO.md): open `admin@demo-bastion`, show the
-canonical lines, start *Run fixture investigation*, pause at the live tool
-trace, open an event citation, then record *Inconclusive* (or another
-review-only disposition). The expected conclusion is **Insufficient evidence**,
+canonical lines, expand *Local scripted walkthrough* and start *Run fixture
+investigation*, pause at the live tool trace, open an event citation, then
+record *Inconclusive* (or another review-only disposition). The expected conclusion is **Insufficient evidence**,
 not a fabricated malicious or clean verdict. On another case, cancel the
 fixture run and point out that cancellation produces **no report**.
 

@@ -60,7 +60,7 @@ export const workspace = {
   fixture_available: true,
   hosted_verified: false,
   hosted_note:
-    "Hosted-provider runs have not been acceptance-tested in this build.",
+    "A six-case Groq evaluation pilot has run, but hosted workspace completion has not been acceptance-tested.",
   scoring,
   active_run: null,
   recovered_interrupted_runs: 0,

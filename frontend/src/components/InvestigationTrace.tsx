@@ -60,11 +60,13 @@ export function InvestigationTrace({ run, onOpenEvidence }: Props) {
     <section className="trace" aria-labelledby={`trace-${run.run_id}`}>
       <div className="section-title">
         <h3 id={`trace-${run.run_id}`}>Investigation trace</h3>
-        <span>{toolCalls} tool call(s)</span>
+        <span>
+          {toolCalls} TOOL CALL{toolCalls === 1 ? "" : "S"}
+        </span>
       </div>
       <p className="muted">
-        Tool calls and the hypotheses the analyst explicitly recorded. No
-        private model reasoning is stored or shown.
+        Recorded evidence-tool calls and explicit hypotheses. No private model
+        reasoning is stored or shown.
       </p>
       <p className="visually-hidden" aria-live="polite">
         {run.state === "running" && latest

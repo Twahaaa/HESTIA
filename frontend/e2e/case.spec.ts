@@ -46,6 +46,11 @@ async function openCase(page: Page, who: RegExp) {
   ).toBeVisible();
 }
 
+async function startFixture(page: Page) {
+  await page.getByText("Local scripted walkthrough").click();
+  await page.getByRole("button", { name: "Run fixture investigation" }).click();
+}
+
 test("synthetic case: investigate, open citations, record a review", async ({
   page,
 }, testInfo) => {
@@ -68,7 +73,7 @@ test("synthetic case: investigate, open citations, record a review", async ({
   await expect(
     page.getByText(/Failed password for invalid user admin/).first(),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Run fixture investigation" }).click();
+  await startFixture(page);
 
   // The first poll is immediate and the run is paced, so the in-progress state
   // is asserted before any tool step: waiting for a step first would race the
@@ -77,6 +82,9 @@ test("synthetic case: investigate, open citations, record a review", async ({
     page.getByText(/There is no report until the run completes/),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel run" })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Run activity" }),
+  ).toContainText("Elapsed");
   const trace = page.getByRole("region", { name: "Investigation trace" });
   await expect(trace.getByText("get_session", { exact: true })).toBeVisible();
 
@@ -136,13 +144,47 @@ test("synthetic case: investigate, open citations, record a review", async ({
   expect(problems).toEqual([]);
 });
 
+test("the pilot view is historical and keeps its caveats visible", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/#/pilot");
+  await expect(
+    page.getByRole("heading", { name: "Six-case Groq pilot" }),
+  ).toBeVisible();
+  await expect(page.getByText(/not a detection-accuracy claim/)).toBeVisible();
+  await expect(
+    page.getByText(/Dataset style can confound detection/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Three missing reports were operational failures/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Case outcomes" }),
+  ).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await shot(page, "pilot", testInfo.project.name);
+});
+
+test("the skip link keeps the open case", async ({ page }) => {
+  await page.goto("/");
+  await openCase(page, /admin@demo-bastion/);
+  const url = page.url();
+  await page.getByRole("link", { name: "Skip to the case workspace" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#workspace")).toBeFocused();
+  expect(page.url()).toBe(url);
+  await expect(
+    page.getByRole("heading", { level: 2, name: /admin@demo-bastion/ }),
+  ).toBeVisible();
+});
+
 test("a cancelled run ends without a report and can be retried", async ({
   page,
 }) => {
   const problems = watchConsole(page);
   await page.goto("/");
   await openCase(page, /leo@demo-bastion/);
-  await page.getByRole("button", { name: "Run fixture investigation" }).click();
+  await startFixture(page);
   // Cancel as soon as the running state is shown, well before the paced run ends.
   await page.getByRole("button", { name: "Cancel run" }).click();
   await expect(
@@ -197,10 +239,22 @@ test("keyboard only: select, investigate, open and close a citation", async ({
     page.getByRole("heading", { level: 2, name: /@demo-/ }),
   ).toBeFocused();
 
+  // The fixture lives in a collapsed walkthrough: open it from the keyboard too.
+  const walkthrough = page.getByText("Local scripted walkthrough");
+  for (
+    let i = 0;
+    i < 30 &&
+    !(await walkthrough.evaluate((el) => el === document.activeElement));
+    i++
+  ) {
+    await page.keyboard.press("Tab");
+  }
+  await expect(walkthrough).toBeFocused();
+  await page.keyboard.press("Enter");
   const run = page.getByRole("button", { name: "Run fixture investigation" });
   for (
     let i = 0;
-    i < 30 && !(await run.evaluate((el) => el === document.activeElement));
+    i < 10 && !(await run.evaluate((el) => el === document.activeElement));
     i++
   ) {
     await page.keyboard.press("Tab");
@@ -275,7 +329,7 @@ test("a lost connection mid-run is reported and polling resumes", async ({
 }) => {
   await page.goto("/");
   await openCase(page, /deploy@demo-app/);
-  await page.getByRole("button", { name: "Run fixture investigation" }).click();
+  await startFixture(page);
   await expect(
     page
       .getByRole("region", { name: "Investigation trace" })

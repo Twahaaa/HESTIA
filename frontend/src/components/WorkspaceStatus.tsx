@@ -134,8 +134,10 @@ export function WorkspaceStatus({ refreshKey, onStatus, onReset }: Props) {
           {provider.configured && !provider.fixture ? (
             <p>
               Configured: {provider.provider} / {provider.model}.{" "}
-              <span className="warning-text">
-                Hosted runs are not verified in this build.
+              <span className="muted">
+                {" "}
+                A small Groq evaluation pilot has been measured; live workspace
+                completion is not established by it.
               </span>
             </p>
           ) : provider.configured && provider.fixture ? (

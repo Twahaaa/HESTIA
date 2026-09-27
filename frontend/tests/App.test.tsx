@@ -155,3 +155,31 @@ it("shows an empty queue plainly", async () => {
   render(<App />);
   expect(await screen.findByText(/No prepared cases/)).toBeInTheDocument();
 });
+
+it("navigates to the historical pilot without loading labels or contacting a provider", async () => {
+  const { calls } = mockApi(baseRoutes());
+  render(<App />);
+  screen.getByRole("link", { name: "Groq pilot" }).click();
+  expect(
+    await screen.findByRole("heading", { name: "Six-case Groq pilot" }),
+  ).toBeInTheDocument();
+  expect(window.location.hash).toBe("#/pilot");
+  expect(
+    screen.getByText(/not a detection-accuracy claim/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/Dataset style can confound detection/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Run with Groq/ }),
+  ).not.toBeInTheDocument();
+  expect(calls.every((call) => call.init?.method !== "POST")).toBe(true);
+  screen.getByRole("link", { name: "Skip to the pilot results" }).click();
+  expect(
+    screen.getByRole("heading", { name: "Six-case Groq pilot" }),
+  ).toBeInTheDocument();
+  screen.getByRole("link", { name: "Case workspace" }).click();
+  expect(
+    await screen.findByRole("heading", { name: "Select a case" }),
+  ).toBeInTheDocument();
+});

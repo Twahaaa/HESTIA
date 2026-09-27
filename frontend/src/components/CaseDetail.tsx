@@ -23,6 +23,7 @@ import { DispositionForm } from "./DispositionForm";
 import { EvidenceDrawer } from "./EvidenceDrawer";
 import { InvestigationTrace } from "./InvestigationTrace";
 import { ReportView } from "./ReportView";
+import { RunActivity } from "./RunActivity";
 
 type Props = {
   caseId: string;
@@ -53,10 +54,12 @@ function RunOutcome({
   run,
   onRetry,
   retryDisabled,
+  retryLabel,
 }: {
   run: RunDetail;
   onRetry: () => void;
   retryDisabled: boolean;
+  retryLabel: string;
 }) {
   if (run.state === "completed") return null;
   if (run.state === "pending" || run.state === "running") {
@@ -96,7 +99,7 @@ function RunOutcome({
       ) : null}
       {run.retry_allowed ? (
         <button type="button" onClick={onRetry} disabled={retryDisabled}>
-          Retry as a new fixture run
+          {retryLabel}
         </button>
       ) : null}
     </div>
@@ -124,6 +127,8 @@ export function CaseDetail({
   const [evidenceHandle, setEvidenceHandle] = useState<string | null>(null);
   const pendingKey = useRef<{ mode: Mode; key: string } | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const focusRunOnStart = useRef(false);
+  const confirmRef = useRef<HTMLFieldSetElement>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt triggers a reload.
   useEffect(() => {
@@ -154,6 +159,23 @@ export function CaseDetail({
   const poll = useRun(runId);
   const run = poll.run && poll.run.run_id === runId ? poll.run : null;
   const lastState = useRef<string | null>(null);
+
+  // The confirmation lives in the investigation panel; a retry from the run
+  // view far below must bring it into view, or the click appears to do nothing.
+  useEffect(() => {
+    if (!confirmHosted) return;
+    confirmRef.current?.scrollIntoView?.({ block: "center" });
+    confirmRef.current?.focus();
+  }, [confirmHosted]);
+
+  useEffect(() => {
+    if (run && focusRunOnStart.current) {
+      focusRunOnStart.current = false;
+      const region = document.getElementById(`run-${run.run_id}`);
+      region?.scrollIntoView?.({ block: "start" });
+      region?.focus();
+    }
+  }, [run]);
 
   useEffect(() => {
     if (!run) return;
@@ -189,6 +211,7 @@ export function CaseDetail({
       });
       pendingKey.current = null;
       setConfirmHosted(false);
+      focusRunOnStart.current = true;
       onSelectRun(response.run.run_id);
       setAttempt((value) => value + 1);
       onChanged();
@@ -249,11 +272,11 @@ export function CaseDetail({
 
   return (
     <section className="detail" aria-labelledby="case-title">
-      <div className="panel">
+      <div className="panel case-overview">
         <button type="button" className="secondary back" onClick={onBack}>
           Back to cases
         </button>
-        <p className="eyebrow">CASE · {detail.dataset_id.toUpperCase()}</p>
+        <p className="eyebrow">CASE FILE / {detail.dataset_id.toUpperCase()}</p>
         <h2 id="case-title" ref={heading} tabIndex={-1}>
           {detail.user ?? "unknown user"}@{detail.host ?? "unknown host"}
         </h2>
@@ -289,30 +312,44 @@ export function CaseDetail({
       </div>
 
       <div className="panel investigate">
-        <h3>Investigation</h3>
+        <div className="section-title">
+          <h3>Investigation</h3>
+          <span>
+            {hostedAvailable
+              ? `${provider?.provider} / ${provider?.model}`
+              : "PROVIDER UNAVAILABLE"}
+          </span>
+        </div>
         <p className="muted">
-          The fixture analyst is a deterministic script. It calls the real
-          evidence tools, contacts no provider and is labelled as a fixture
-          everywhere it appears.
+          The agent reads evidence through bounded tools. A report appears only
+          after its citations resolve to stored evidence.
         </p>
         <div className="actions">
-          <button
-            type="button"
-            onClick={() => start("fixture")}
-            disabled={starting || blocked}
-          >
-            {starting ? "Starting…" : "Run fixture investigation"}
-          </button>
           {hostedAvailable ? (
             <button
               type="button"
-              className="secondary"
               onClick={() => setConfirmHosted(true)}
               disabled={starting || blocked}
             >
-              Run hosted investigation…
+              Run with{" "}
+              {provider?.provider === "groq" ? "Groq" : provider?.provider}…
             </button>
           ) : null}
+          <details className="fixture-option">
+            <summary>Local scripted walkthrough</summary>
+            <p className="muted">
+              A deterministic fixture, not a live model or an accuracy
+              demonstration.
+            </p>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => start("fixture")}
+              disabled={starting || blocked}
+            >
+              {starting ? "Starting…" : "Run fixture investigation"}
+            </button>
+          </details>
           {runActive && run ? (
             <button
               type="button"
@@ -325,12 +362,13 @@ export function CaseDetail({
           ) : null}
         </div>
         {confirmHosted && provider ? (
-          <fieldset className="confirm">
+          <fieldset className="confirm" ref={confirmRef} tabIndex={-1}>
             <legend>Send redacted evidence to a hosted provider?</legend>
             <p>
               A hosted run sends redacted evidence to {provider.provider} (
-              {provider.model}) and may incur cost. Hosted runs have not been
-              acceptance-tested in this build.
+              {provider.model}) and may incur cost. A six-case hosted evaluation
+              pilot exists; completion and correctness remain limited, and this
+              workspace run is separate from that pilot.
             </p>
             <button
               type="button"
@@ -418,7 +456,12 @@ export function CaseDetail({
       </div>
 
       {runId ? (
-        <div className="panel run-view" aria-live="off">
+        <div
+          id={`run-${runId}`}
+          className="panel run-view"
+          aria-live="off"
+          tabIndex={-1}
+        >
           {poll.status === "lost" ||
           poll.status === "stopped" ||
           poll.status === "error" ? (
@@ -453,11 +496,22 @@ export function CaseDetail({
                   : ""}{" "}
                 · {usageLine(run)}
               </p>
+              <RunActivity run={run} connection={poll.status} />
               <RunOutcome
                 run={run}
-                onRetry={() => start("fixture")}
+                onRetry={() => {
+                  if (run.fixture) start("fixture");
+                  else setConfirmHosted(true);
+                }}
+                retryLabel={
+                  run.fixture
+                    ? "Retry as a new fixture run"
+                    : "Retry hosted run…"
+                }
                 retryDisabled={
-                  starting || (active !== null && active.run_id !== run.run_id)
+                  starting ||
+                  (!run.fixture && !hostedAvailable) ||
+                  (active !== null && active.run_id !== run.run_id)
                 }
               />
               <InvestigationTrace

@@ -205,7 +205,7 @@ def test_no_provider_secret_reaches_any_response(seeded):
         status = client.get("/api/workspace").json()
         assert status["provider"]["configured"] is True
         assert status["hosted_verified"] is False
-        assert "not been acceptance-tested" in status["hosted_note"]
+        assert "hosted workspace completion has not" in status["hosted_note"]
 
 
 def test_demo_reset_clears_case_activity_and_keeps_evidence(client, seeded):

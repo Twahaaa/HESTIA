@@ -1,5 +1,53 @@
 # Case workspace demo
 
+## Groq live walkthrough and pilot view
+
+The interface now opens directly onto the case workspace. **Groq pilot** in the
+top navigation (or `/#/pilot`) presents a read-only, public-safe summary of the
+approved six-case Groq evaluation. It does not read the private label sidecar or
+start a model call. Its outcomes and caveats are separate from any new workspace
+investigation. The workspace shows a live activity card, elapsed time and each
+recorded evidence-tool call as `/api/runs/{run_id}` updates. A pause means the
+next step has not been recorded; it does not imply a specific provider action.
+
+For a live hosted demonstration, use a workspace backed by the **prepared real
+evidence store** (not the synthetic `demo-seed` volume), with `.env` configured
+for `HESTIA_AGENT_PROVIDER=groq`, its model and key(s). Confirm the provider and
+case in the UI, open a prepared case and choose **Run with Groq…**. The UI asks
+for explicit confirmation before redacted evidence leaves the machine. It
+shows tool calls, the grounded report if one completes, or an incomplete state
+with no verdict if the provider or budgets stop the run. Only one run can be
+active; the evaluator must not interpret a single live outcome as an addition
+to the frozen six-case pilot. A prior OpenSSH session completed twice in
+evaluation, but that dataset is unlabelled and a new run has no guaranteed
+outcome. Check the workspace's configured budgets and evidence store before the
+presentation. Do not seed or reset the real store for this walkthrough.
+
+Run it against a **copy** of the prepared store. Workspace runs, reviews and
+interruption records are written into the evidence store. A copy keeps the
+evaluated `artifacts/evidence.sqlite3` byte-identical to the one the evaluation
+results record. From the project root, after `npm run build` in `frontend/`
+(Node 26.9):
+
+```bash
+mkdir -p artifacts/live-demo
+cp artifacts/evidence.sqlite3 artifacts/live-demo/
+cp -r artifacts/knowledge artifacts/normality artifacts/preparation artifacts/live-demo/
+HESTIA_ARTIFACT_ROOT=artifacts/live-demo uv run uvicorn hestia.api.app:create_app --factory --host 127.0.0.1 --port 8010
+```
+
+Open <http://127.0.0.1:8010>. The queue pages through all 457 prepared
+sessions; a case also opens directly at `#/cases/<case-id>`. `.env` supplies
+the provider, model, keys and per-run budgets. Set
+`HESTIA_AGENT_CONTEXT_TOKEN_BUDGET` (for example `5000`) on Groq's free plan,
+so long investigations are condensed instead of refused with HTTP 413. A live
+run can still stop on rate limits or the turn limit. When it does, it shows an
+incomplete state with no verdict, which is the intended behaviour.
+
+The scripted synthetic walkthrough below remains available under **Local
+scripted walkthrough** in a case. It calls the real evidence tools but no
+provider; it is not the Groq demonstration.
+
 This walkthrough runs the case workspace on a small **synthetic** authentication
 log that ships with the source. It needs Docker and nothing else: no API key, no
 GPU and no dataset download.
@@ -40,7 +88,8 @@ That is the expected empty state, not an error.
    score is not evidence of normal behaviour. No case carries a threat label.
 2. **Open a case.** Select `admin@demo-bastion`. The detail shows the exact stored
    log lines with source file, line number and time.
-3. **Investigate.** Choose *Run fixture investigation*. The run appears as
+3. **Investigate.** Expand *Local scripted walkthrough* and choose *Run fixture
+   investigation*. The run appears as
    *Running*, and each tool call joins the trace as it happens, showing the tool,
    what it asked for, how many evidence references it returned, and its duration.
    Recorded hypotheses appear as explicit steps. No private model reasoning is
@@ -138,8 +187,10 @@ provider key.
 
 - No behavioural model is trained, so cases are unscored and investigations have
   no anomaly score. The honest outcome is usually an abstention.
-- Hosted-provider runs are implemented behind an explicit confirmation, but they
-  have not been acceptance-tested in this build. Every demo run is a fixture run.
+- Hosted workspace runs require explicit confirmation. The six-case Groq
+  evaluation pilot is measured separately, but its partial completion does not
+  establish reliable completion for a new live workspace run. The synthetic
+  walkthrough in this document remains a fixture run.
 - The fixture analyst demonstrates the pipeline. Its findings restate retrieved
   fields and are not an assessment.
 - One workspace process owns investigations for a store. Do not run

@@ -315,13 +315,75 @@ it("asks for explicit confirmation before a hosted run", async () => {
   window.history.replaceState(null, "", `/#/cases/${CASE_ID}`);
   render(<App />);
   expect(
-    await screen.findByText(/Hosted runs are not verified in this build/),
+    await screen.findByText(
+      /live workspace completion is not established by it/,
+    ),
   ).toBeInTheDocument();
   fireEvent.click(
-    await screen.findByRole("button", { name: "Run hosted investigation…" }),
+    await screen.findByRole("button", { name: "Run with Groq…" }),
   );
   expect(screen.getByText(/may incur cost/)).toBeInTheDocument();
   expect(calls.some((call) => call.init?.method === "POST")).toBe(false);
+});
+
+it("never turns a failed hosted retry into a fixture run", async () => {
+  const hosted = {
+    fixture: false,
+    provider: "groq",
+    model: "example-model",
+    execution: {
+      kind: "hosted",
+      label: "Hosted provider run (groq / example-model)",
+    },
+    incomplete_reason: "rate limit allowance exhausted",
+  };
+  const { calls } = mockApi(
+    baseRoutes({
+      "/api/workspace": {
+        ...workspace,
+        provider: {
+          configured: true,
+          provider: "groq",
+          model: "example-model",
+          fixture: false,
+          reason: null,
+        },
+      },
+      [`/api/cases/${CASE_ID}`]: caseDetail([
+        runSummary("failed", "budget_exhausted", hosted),
+      ]),
+      [`/api/runs/${RUN_ID}`]: runDetail("failed", "budget_exhausted", hosted),
+    }),
+  );
+  window.history.replaceState(null, "", `/#/cases/${CASE_ID}`);
+  render(<App />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Retry hosted run…" }),
+  );
+  // The confirmation sits in the investigation panel, far from the retry
+  // button; it must take focus so the click visibly does something.
+  const confirm = screen.getByRole("group", {
+    name: /Send redacted evidence to a hosted provider/,
+  });
+  await waitFor(() => expect(confirm).toHaveFocus());
+  expect(calls.some((call) => call.init?.method === "POST")).toBe(false);
+});
+
+it("the skip link moves focus without closing the open case", async () => {
+  mockApi(completedRoutes());
+  render(<App />);
+  expect(
+    await screen.findByRole("heading", { level: 2, name: /@/ }),
+  ).toBeInTheDocument();
+  const before = window.location.hash;
+  fireEvent.click(
+    screen.getByRole("link", { name: "Skip to the case workspace" }),
+  );
+  expect(window.location.hash).toBe(before);
+  expect(document.getElementById("workspace")).toHaveFocus();
+  expect(
+    screen.getByRole("heading", { level: 2, name: /@/ }),
+  ).toBeInTheDocument();
 });
 
 it("records a review disposition and shows it in the history", async () => {

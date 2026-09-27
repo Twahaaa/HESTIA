@@ -10,8 +10,9 @@ from hestia.api.contracts import ResetRequest, ResetResponse, WorkspaceStatus
 from hestia.runs.service import RunRequestError, RunService
 
 HOSTED_NOTE = (
-    "Hosted-provider runs have not been acceptance-tested in this build. Fixture runs "
-    "use a deterministic scripted analyst and are never presented as a live model."
+    "A six-case Groq evaluation pilot has run, but hosted workspace completion has not "
+    "been acceptance-tested. Fixture runs use a deterministic scripted analyst "
+    "and are never presented as a live model."
 )
 
 
