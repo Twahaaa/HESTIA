@@ -12,7 +12,6 @@ data/manifests/
 data/raw/
 data/processed/
 artifacts/*
-!artifacts/.gitkeep
 frontend/test-results/
 frontend/playwright-report/
 graphify-out/
