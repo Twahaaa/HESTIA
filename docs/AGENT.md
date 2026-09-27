@@ -85,22 +85,68 @@ an ordered JSON array, for example
 `HESTIA_AGENT_API_KEYS='["<first-key>","<second-key>"]'`; replace both
 placeholders locally. Keep the real keys out of the source export and logs.
 
-One case still has **one agent and one selected provider/model**. On an HTTP
-429 rate limit, the current key is retired for that run and the next key
-receives the *same model request*. OpenRouter also rotates on HTTP 402 **only**
-when its error metadata explicitly says `openrouter_key_limit`. Account-wide
-credit exhaustion, invalid keys, server errors, timeouts and local budget
-exhaustion do not rotate. SDK automatic retries are disabled so each provider
-attempt counts against the run's existing `HESTIA_AGENT_MAX_TURNS` ceiling;
-tool/token/wall-clock budgets and cancellation remain in force. When all
-keys hit a limit, the run ends incomplete with no report. The stored usage
-includes a key-free provider-attempt count and rotation count. Groq may apply
-limits across an organization, and OpenRouter 429s can originate upstream, so
-additional keys are not guaranteed to resolve a rate limit. A new run is
-required after an exhausted run; no provider fallback is implied.
+One case still has **one agent and one selected provider/model**. Rate limits
+are paced rather than probed (`HESTIA_AGENT_RATE_LIMIT_PACING`, on by default):
 
-Hosted behavior remains unverified without actual provider credentials. The
-fixture path does not rotate and contacts no provider.
+- Each key is tracked separately. Before each request the key with headroom is
+  chosen, preferring the current one. Once a key's response has carried
+  `x-ratelimit-*` headers, its token budget is modelled as the provider
+  reports it: `remaining` refilling steadily to the full per-minute limit over
+  the reported reset time. Groq also reports requests per day. A key without
+  headers yet uses optional configured per-key `..._TOKENS_PER_MINUTE` /
+  `..._REQUESTS_PER_MINUTE` limits over a sliding 60 s window.
+- On HTTP 429 the key cools down for the provider's `retry-after`, or 60 s if
+  the header is missing, and the same model request goes to a key with
+  headroom. A cooled key may be used again later in the run.
+- If no key has headroom, the run waits in one-second steps, checking
+  cancellation and the wall clock. The wait is capped by
+  `HESTIA_AGENT_RATE_LIMIT_MAX_WAIT_SECONDS` (default 65, enough for an emptied
+  per-minute budget to refill) and the remaining run time. A longer wait ends the run incomplete ("keys exhausted for now")
+  instead of retrying.
+- 429 responses use their own allowance (`HESTIA_AGENT_RATE_LIMITED_ATTEMPTS`,
+  default 4), not the model's turns. Provider HTTP attempts per run are at
+  most `HESTIA_AGENT_MAX_TURNS` plus that allowance.
+- Pacing state is shared by runs in one process, so consecutive cases do not
+  burst on an already-depleted key. Keys are never stored in it; only
+  rate-limit headers are read.
+
+OpenRouter also switches keys on HTTP 402 **only** when its error metadata
+explicitly says `openrouter_key_limit`; that key is not used again. Account-wide
+credit exhaustion, invalid keys, server errors, timeouts and local budget
+exhaustion never rotate. SDK automatic retries are disabled so every HTTP
+attempt is counted. Stored usage includes key-free counts of provider attempts,
+rotations, 429 responses and seconds spent waiting. Limits shared by an
+organization or imposed upstream (OpenRouter) cannot be avoided by switching to
+another key from the same account. No provider fallback is implied.
+
+With pacing turned off, the earlier behaviour applies: a limited key is retired
+for that run, and every attempt counts against `HESTIA_AGENT_MAX_TURNS`.
+
+**Turn budget and conclusion.** Before every model request the agent is told
+how many turns it has left for gathering evidence. Two turns of
+`HESTIA_AGENT_MAX_TURNS` are kept in reserve. After that, or once the tool-call
+budget is spent, the evidence tools are withdrawn and the model is told to
+report from what it has already retrieved. The report may honestly be
+`insufficient_evidence`. The citation-repair pass also runs without evidence
+tools. A case that would otherwise run out of turns mid-search therefore ends
+with a report, and every report still passes citation checks before it is
+published. Evaluation results record a digest of these instructions.
+
+**Context size.** Free tiers can refuse a single oversized request. Groq's
+free plan answers HTTP 413 when one request exceeds the per-minute token limit.
+Set `HESTIA_AGENT_CONTEXT_TOKEN_BUDGET` (for example `5000` on an 8K-TPM key)
+and, before each request, the oldest tool results are condensed to their
+evidence handles once the estimated history exceeds it. The two newest results
+are kept in full, and older reasoning text is dropped. Condensed handles remain
+valid citations, because grounding checks the run's recorded tool calls, not
+the chat history. Stored usage counts condensed results. Malformed tool calls
+use the output-retry allowance (`HESTIA_AGENT_MAX_RETRIES`). A model that
+produces them often may need a larger allowance, e.g. 4.
+
+Three approved three-case hosted evaluations have run on Groq; see
+`docs/EVALUATION.md`. Only the third used the refill model above. The
+turn-budget conclusion was added afterwards and is verified offline only. The fixture path
+does not rotate and contacts no provider.
 
 ## Running a case
 

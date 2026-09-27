@@ -55,6 +55,8 @@ async def test_mcp_stdio(tmp_path):
         command=sys.executable,
         args=["-m", "hestia.mcp.server"],
         env={**os.environ, "HESTIA_DATA_ROOT": str(tmp_path)},
+        # Outside the repository, so the child never reads a developer's .env.
+        cwd=str(tmp_path),
     )
     async with Client(server) as client:
         result = await client.call_tool("list_datasets", {})

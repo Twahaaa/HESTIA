@@ -206,12 +206,14 @@ them into a benign verdict.
 
 **Provider adapters and keys.** Groq and OpenRouter share the same runner but
 have explicit adapters. A local `.env` can specify one key or an ordered
-list for the *same* provider/model. On HTTP 429, or OpenRouter's explicit
-per-key 402 credit limit, the next key receives the same request. Attempts
-still count against one run-wide budget; switching keys does not make a
-partial report publishable. Account-wide limits may affect every key.
-Rotation has only been exercised in offline tests; no live hosted call or
-bill is recorded. Do not put keys on slides or in a source snapshot.
+list for the *same* provider/model. Each key is paced within the provider's
+reported rate limits. A 429 cools that key down for `retry-after`, and the
+request moves to a key with headroom. Waits are capped, and 429s have a
+separate small allowance, so total attempts stay bounded. Switching keys never
+makes a partial report publishable, and account-wide limits may affect every
+key. Pacing is verified offline. A three-case hosted Groq evaluation (before
+pacing) ended without reports after 429s used up its attempts. See
+`docs/EVALUATION.md`. Do not put keys on slides or in a source snapshot.
 
 ## 7. What a reviewer can actually see in the UI
 
@@ -410,10 +412,10 @@ read-only tools, request more evidence, record and revise hypotheses, then
 produce a structured, grounded report or abstain. It is bounded by external
 budgets and does not have autonomous containment powers.
 
-**“Can rotating keys overcome every free-tier limit?”** No. Keys rotate on
-specified per-request/per-key provider responses but attempts remain bounded
-per run. Limits shared at the provider/account level may affect every key;
-there has been no live provider acceptance test.
+**“Can rotating keys overcome every free-tier limit?”** No. Hestia paces each
+key within its reported limits and waits a bounded time for headroom, but
+attempts and waits stay capped per run. Limits shared at the provider/account
+level affect every key from that account. Hosted acceptance is still open.
 
 **“Why did the refined HDFS result improve so much?”** On validation, all
 48 misses of the original baseline were very short traces, while most false

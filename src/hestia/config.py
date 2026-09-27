@@ -48,6 +48,19 @@ class Settings(BaseSettings):
     agent_max_retries: int = 2
     agent_request_timeout_seconds: float = 60.0
     agent_concurrency: int = 1
+    #: Pace requests per key within provider rate limits instead of probing them.
+    agent_rate_limit_pacing: bool = True
+    #: Per-key limits to respect before the provider reports its own in headers.
+    agent_rate_limit_tokens_per_minute: int | None = None
+    agent_rate_limit_requests_per_minute: int | None = None
+    #: Longest single wait for a key to have headroom; longer ends the run cleanly.
+    agent_rate_limit_max_wait_seconds: float = 65.0
+    #: HTTP 429 responses a run may absorb, on top of its model turns.
+    agent_rate_limited_attempts: int = 4
+    #: Estimated token ceiling for the message history of one request. When set,
+    #: the oldest tool results are condensed to their evidence handles to stay
+    #: under it (free tiers can refuse a single oversized request). None: off.
+    agent_context_token_budget: int | None = None
     #: Salt for local, reversible pseudonyms. Generated per deployment and kept
     #: local; it is never sent to a provider and never written to an export.
     agent_redaction_salt: SecretStr | None = None
@@ -82,6 +95,31 @@ class Settings(BaseSettings):
     def bound_fixture_pace(cls, value: float) -> float:
         if not 0 <= value <= 5:
             raise ValueError("agent_fixture_pace_seconds must be between 0 and 5")
+        return value
+
+    @field_validator("agent_rate_limit_max_wait_seconds")
+    @classmethod
+    def bound_rate_limit_wait(cls, value: float) -> float:
+        if not 0 <= value <= 120:
+            raise ValueError("agent_rate_limit_max_wait_seconds must be between 0 and 120")
+        return value
+
+    @field_validator(
+        "agent_rate_limited_attempts",
+        "agent_rate_limit_tokens_per_minute",
+        "agent_rate_limit_requests_per_minute",
+    )
+    @classmethod
+    def reject_negative_rate_limits(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("rate-limit settings must not be negative")
+        return value
+
+    @field_validator("agent_context_token_budget")
+    @classmethod
+    def bound_context_budget(cls, value: int | None) -> int | None:
+        if value is not None and value < 1_000:
+            raise ValueError("agent_context_token_budget must be at least 1000")
         return value
 
     @field_validator("agent_concurrency")

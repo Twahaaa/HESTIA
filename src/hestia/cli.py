@@ -345,6 +345,48 @@ def run_investigation(
     }
 
 
+def evaluate_agent(args: argparse.Namespace) -> dict[str, Any]:
+    """Plan or run an agent evaluation. Hosted mode needs the plan's approval token."""
+    from hestia.evaluation.agent_eval import (
+        HostedRefused,
+        hosted_settings,
+        load_config,
+        plan,
+        run_agent_evaluation,
+        select_cases,
+    )
+
+    def fixture_settings() -> Settings:
+        return Settings(_env_file=None)  # type: ignore[call-arg]
+
+    config = load_config(args.config)
+    try:
+        if args.plan:
+            if args.mode == "hosted":
+                if config.hosted is None:
+                    raise HostedRefused("the config has no hosted plan")
+                settings = hosted_settings(Settings, config.hosted)
+            else:
+                settings = fixture_settings()
+            index = (args.config.resolve().parent / config.reference_index_path).resolve()
+            cases = select_cases(config, settings.evidence_database, index)
+            return {
+                "planned_only": True,
+                "keys_configured": len(settings.agent_keys) if args.mode == "hosted" else 0,
+                **plan(config, cases, mode=args.mode, limit_cases=args.limit_cases),
+            }
+        return run_agent_evaluation(
+            args.config,
+            mode=args.mode,
+            output_root=fixture_settings().artifact_root / "evaluation",
+            settings_factory=Settings if args.mode == "hosted" else fixture_settings,
+            approval=args.approve,
+            limit_cases=args.limit_cases,
+        )
+    except HostedRefused as exc:
+        raise SystemExit(f"hosted evaluation refused (nothing was sent): {exc}") from None
+
+
 def _fixture_script() -> list[Any]:
     """A deterministic analyst that actually uses the tools, then abstains.
 
@@ -425,7 +467,31 @@ def main() -> None:
     inspect = commands.add_parser("inspect-hdfs", help="show raw HDFS lines for one block")
     inspect.add_argument("--archive", type=Path, required=True)
     inspect.add_argument("--block-id", required=True)
+    source_labels = commands.add_parser(
+        "label-sources",
+        help=(
+            "derive evaluation-only labels from upstream AIT-LDS/CAM-LDS conventions "
+            "(private sidecar; scoring only)"
+        ),
+    )
+    source_labels.add_argument("--output-dir", type=Path, default=None)
+    agent_eval = commands.add_parser(
+        "evaluate-agent",
+        help="evaluate the investigation agent on a pre-registered, label-free case set",
+    )
+    agent_eval.add_argument("--config", type=Path, required=True)
+    agent_eval.add_argument("--mode", choices=("fixture", "hosted"), default="fixture")
+    agent_eval.add_argument(
+        "--plan", action="store_true", help="print cases, ceilings and approval token; run nothing"
+    )
+    agent_eval.add_argument("--approve", help="approval token printed by --plan (hosted only)")
+    agent_eval.add_argument("--limit-cases", type=int, default=None)
     args = parser.parse_args()
+    if args.command == "evaluate-agent":
+        # Handled before loading local settings: a fixture evaluation must not
+        # read provider keys, and a hosted one validates them without echoing them.
+        print(json.dumps(evaluate_agent(args), indent=2, sort_keys=True, default=str))
+        return
     settings = Settings()
     if args.command == "mcp":
         from hestia.mcp.server import main as run
@@ -514,6 +580,15 @@ def main() -> None:
         from hestia.evaluation.hdfs import inspect_block
 
         print(json.dumps(inspect_block(args.archive, args.block_id), indent=2))
+    elif args.command == "label-sources":
+        from hestia.evaluation.source_labels import write_source_labels
+
+        result = write_source_labels(
+            settings.evidence_database,
+            settings.data_root / "raw",
+            args.output_dir or settings.artifact_root / "evaluation" / "labels",
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
     elif args.command == "knowledge-build":
         from hestia.knowledge import ATTACK_SOURCE_URL
 

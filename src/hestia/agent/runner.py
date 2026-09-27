@@ -13,6 +13,7 @@ recorded in an immutable trace whether it helped or not.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import time
 import uuid
@@ -21,9 +22,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import PrepareTools, ProcessHistory
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UsageLimitExceeded
+from pydantic_ai.usage import RunUsage
 
 from hestia.agent.budgets import Budget, BudgetExceeded, BudgetLedger, CancellationToken
+from hestia.agent.compaction import compact_history
 from hestia.agent.contracts import (
     CaseInput,
     CaseRun,
@@ -62,6 +66,35 @@ Rules you must follow:
 - If the evidence does not support a conclusion, return verdict
   'insufficient_evidence' with severity 'none' and say what was missing.
 """
+
+
+#: Model turns kept back from evidence gathering, so a forced conclusion still
+#: leaves room for an output retry or the single citation-repair pass.
+CONCLUSION_RESERVE_TURNS = 2
+
+GATHERING_NOTE = (
+    "Turn budget: {left} model turn(s) remain for gathering evidence (of {total} in "
+    "total). After that the evidence tools are withdrawn and you must return your "
+    "report. Choose the most informative next call, and stop gathering as soon as the "
+    "evidence supports a conclusion or clearly cannot."
+)
+CONCLUDING_NOTE = (
+    "Turn budget: the evidence tools are now withdrawn; only the final report tool "
+    "remains, so do not call any evidence tool. Return your final report now, using "
+    "only evidence already retrieved. If that evidence does not support a "
+    "conclusion, return 'insufficient_evidence' and state what is missing."
+)
+
+
+def instructions_digest() -> str:
+    """Identifies the exact agent instructions, for evaluation records."""
+    text = "\n".join((INSTRUCTIONS, GATHERING_NOTE, CONCLUDING_NOTE))
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _gathering_turns(budget: Budget) -> int:
+    """Requests that may still call evidence tools before the model must conclude."""
+    return max(budget.max_turns - CONCLUSION_RESERVE_TURNS - 1, 1)
 
 
 class AgentRunError(RuntimeError):
@@ -113,6 +146,10 @@ class _Investigation:
         self.retrieved: set[str] = set()
         self.techniques: set[str] = set()
         self.step = 0
+        #: Set when evidence tools are withdrawn and the model must report.
+        self.concluding = False
+        #: Tool results condensed to fit the context budget (distinct results).
+        self.compacted = 0
         #: Called after every recorded step so a watcher can see progress live.
         self.on_progress: Callable[[], None] | None = None
 
@@ -460,7 +497,11 @@ def _register_tools(agent: Any, client: Any, state: _Investigation) -> None:
 
 
 def _usage(
-    raw: Any, wall_seconds: float, tool_calls: int, model: RotatingModel | Any = None
+    raw: Any,
+    wall_seconds: float,
+    tool_calls: int,
+    model: RotatingModel | Any = None,
+    compacted: int = 0,
 ) -> Usage:
     cost = getattr(raw, "cost", None)
     return Usage(
@@ -472,9 +513,20 @@ def _usage(
         + int(getattr(raw, "output_tokens", 0) or 0),
         provider_attempts=getattr(model, "attempts", 0),
         key_rotations=getattr(model, "key_rotations", 0),
+        rate_limited=getattr(model, "rate_limited", 0),
+        rate_limit_wait_seconds=round(getattr(model, "rate_limit_wait_seconds", 0.0), 3),
+        compacted_tool_results=compacted,
         estimated_cost_usd=float(cost) if cost is not None else None,
         wall_seconds=round(wall_seconds, 3),
     )
+
+
+def _combined(*passes: RunUsage) -> RunUsage:
+    """Sum the first pass and any repair pass, so neither is dropped from accounting."""
+    total = RunUsage()
+    for item in passes:
+        total = total + item
+    return total
 
 
 def _case_brief(case: CaseInput) -> str:
@@ -531,6 +583,9 @@ async def investigate(
         cancellation.attach(ledger)
     state = _Investigation(case, redactor, ledger)
     model: Any = None
+    # One accumulator per agent pass. Passed into the framework so tokens consumed
+    # before a failure are still accounted for, not only those of a finished pass.
+    first_pass, repair_pass = RunUsage(), RunUsage()
 
     def record(
         run_state: RunState,
@@ -558,6 +613,8 @@ async def investigate(
                 wall_seconds=round(ledger.elapsed_seconds, 3),
                 provider_attempts=getattr(model, "attempts", 0),
                 key_rotations=getattr(model, "key_rotations", 0),
+                rate_limited=getattr(model, "rate_limited", 0),
+                rate_limit_wait_seconds=round(getattr(model, "rate_limit_wait_seconds", 0.0), 3),
             ),
             incomplete_reason=reason,
         )
@@ -580,20 +637,64 @@ async def investigate(
 
     try:
         async with open_tool_session(settings, stdio=stdio) as client:
+            gathering = _gathering_turns(budget)
+
+            def must_conclude(ctx: RunContext[None]) -> bool:
+                return (
+                    state.concluding
+                    or ctx.usage.requests >= gathering
+                    or ledger.tool_calls >= budget.max_tool_calls
+                )
+
+            async def withdraw_when_concluding(ctx: RunContext[None], tool_defs: list) -> list:
+                # Output (report) tools are not in this list, so reporting stays possible.
+                return [] if must_conclude(ctx) else tool_defs
+
+            capabilities: list[Any] = [PrepareTools(withdraw_when_concluding)]
+            context_budget = settings.agent_context_token_budget
+            if context_budget is not None:
+
+                def fit_context(messages: list[Any]) -> list[Any]:
+                    compacted = compact_history(messages, context_budget)
+                    state.compacted = sum(
+                        1
+                        for message in compacted
+                        for part in getattr(message, "parts", ())
+                        if isinstance(getattr(part, "content", None), dict)
+                        and part.content.get("compacted") is True
+                    )
+                    return compacted
+
+                capabilities.append(ProcessHistory(fit_context))
+
             agent = Agent(
                 model,
                 output_type=Report,
                 instructions=INSTRUCTIONS,
                 retries=budget.max_retries,
+                capabilities=capabilities,
             )
+
+            @agent.instructions
+            def turn_budget(ctx: RunContext[None]) -> str:
+                if must_conclude(ctx):
+                    return CONCLUDING_NOTE
+                return GATHERING_NOTE.format(
+                    left=gathering - ctx.usage.requests, total=budget.max_turns
+                )
+
             _register_tools(agent, client, state)
             if cancel_after_tool_calls is not None:
                 _arm_cancellation(state, cancel_after_tool_calls)
 
-            result = await agent.run(_case_brief(case), usage_limits=budget.usage_limits())
+            result = await agent.run(
+                _case_brief(case), usage_limits=budget.usage_limits(), usage=first_pass
+            )
             ledger.check()
             report: Report = result.output
-            usage = _usage(result.usage, ledger.elapsed_seconds, ledger.tool_calls, model)
+            usage = _usage(
+                first_pass, ledger.elapsed_seconds, ledger.tool_calls, model, state.compacted
+            )
 
             repository = _repository(settings)
             grounding = validate_report(
@@ -604,14 +705,23 @@ async def investigate(
                 technique_ids=frozenset(state.techniques),
             )
             if not grounding.grounded:
+                # The repair fixes citations from evidence already retrieved.
+                state.concluding = True
                 repaired = await agent.run(
                     repair_instruction(grounding),
                     message_history=result.all_messages(),
                     usage_limits=budget.usage_limits(),
+                    usage=repair_pass,
                 )
                 ledger.check()
                 report = repaired.output
-                usage = _usage(repaired.usage, ledger.elapsed_seconds, ledger.tool_calls, model)
+                usage = _usage(
+                    _combined(first_pass, repair_pass),
+                    ledger.elapsed_seconds,
+                    ledger.tool_calls,
+                    model,
+                    state.compacted,
+                )
                 grounding = validate_report(
                     report,
                     redactor=redactor,
@@ -636,31 +746,43 @@ async def investigate(
         # ExceptionGroup. Flatten it before deciding how the run ended, otherwise a
         # budget stop would be misreported as an opaque internal error.
         leaves = _leaf_exceptions(exc)
+        partial = _usage(
+            _combined(first_pass, repair_pass),
+            ledger.elapsed_seconds,
+            ledger.tool_calls,
+            model,
+            state.compacted,
+        )
         budget_stop = next((item for item in leaves if isinstance(item, BudgetExceeded)), None)
         if budget_stop is not None:
             state_name = (
                 RunState.cancelled if budget_stop.budget == "cancellation" else RunState.failed
             )
-            return record(state_name, reason=str(budget_stop))
+            return record(state_name, reason=str(budget_stop), usage=partial)
         limit_stop = next((item for item in leaves if isinstance(item, UsageLimitExceeded)), None)
         if limit_stop is not None:
-            return record(RunState.failed, reason=f"usage budget exhausted: {limit_stop}")
+            return record(
+                RunState.failed, reason=f"usage budget exhausted: {limit_stop}", usage=partial
+            )
         first = leaves[0] if leaves else exc
         if isinstance(first, ProviderKeysExhausted):
-            return record(RunState.failed, reason=str(first))
+            return record(RunState.failed, reason=str(first), usage=partial)
         if isinstance(first, ModelHTTPError):
             return record(
                 RunState.failed,
                 reason=f"provider request failed (HTTP {first.status_code}); no report was published",
+                usage=partial,
             )
         if isinstance(first, ModelAPIError):
             return record(
-                RunState.failed, reason="provider request failed; no report was published"
+                RunState.failed,
+                reason="provider request failed; no report was published",
+                usage=partial,
             )
         reason = f"{type(first).__name__}: {first}"
         for key in settings.agent_keys:
             reason = reason.replace(key, "[redacted]")
-        return record(RunState.failed, reason=reason)
+        return record(RunState.failed, reason=reason, usage=partial)
     finally:
         if isinstance(model, RotatingModel):
             with contextlib.suppress(Exception):
@@ -697,4 +819,10 @@ def _repository(settings: Settings) -> Any:
     return EvidenceRepository(settings.evidence_database)
 
 
-__all__ = ["AgentRunError", "investigate", "open_tool_session"]
+__all__ = [
+    "CONCLUSION_RESERVE_TURNS",
+    "AgentRunError",
+    "instructions_digest",
+    "investigate",
+    "open_tool_session",
+]

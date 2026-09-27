@@ -146,6 +146,11 @@ class Usage(BaseModel):
     total_tokens: int = Field(default=0, ge=0)
     provider_attempts: int = Field(default=0, ge=0)
     key_rotations: int = Field(default=0, ge=0)
+    #: HTTP 429 responses absorbed, and seconds spent waiting for key headroom.
+    rate_limited: int = Field(default=0, ge=0)
+    rate_limit_wait_seconds: float = Field(default=0.0, ge=0.0)
+    #: Older tool results condensed to their handles to fit the context budget.
+    compacted_tool_results: int = Field(default=0, ge=0)
     estimated_cost_usd: float | None = None
     wall_seconds: float = Field(default=0.0, ge=0.0)
 

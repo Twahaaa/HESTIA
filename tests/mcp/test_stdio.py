@@ -110,6 +110,8 @@ async def test_live_stdio_client_calls_every_registered_tool(prepared, session_i
             "HESTIA_DATA_ROOT": str(prepared.data_root),
             "HESTIA_ARTIFACT_ROOT": str(prepared.artifact_root),
         },
+        # Outside the repository, so the child never reads a developer's .env.
+        cwd=str(prepared.artifact_root),
     )
     async with Client(parameters) as client:
         listed = await client.list_tools()

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "datasets": [
+    "ait-auth",
+    "cam-auth",
+    "openssh"
+  ],
+  "per_dataset": 2,
+  "seed": 20260927,
+  "reference_index_path": "../../artifacts/knowledge/reference-index.json",
+  "labels_path": null,
+  "budget": {
+    "max_turns": 16,
+    "max_tool_calls": 24,
+    "max_total_tokens": 80000,
+    "max_wall_seconds": 420,
+    "max_rate_limited": 4,
+    "max_rate_limit_wait_seconds": 65,
+    "max_wait_between_cases_seconds": 90,
+    "max_retries": 4,
+    "context_token_budget": 5000
+  },
+  "hosted": {
+    "provider": "groq",
+    "model": "qwen/qwen3.8-27b",
+    "max_requests": 120,
+    "max_total_tokens": 600000,
+    "price_input_per_million_usd": 0.8,
+    "price_output_per_million_usd": 4.0,
+    "price_source": "console.groq.com/docs/models, read 2026-09-27 (preview model)"
+  }
+}

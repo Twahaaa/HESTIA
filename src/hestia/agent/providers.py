@@ -13,8 +13,24 @@ from dataclasses import dataclass
 from typing import Any
 
 from hestia.agent.budgets import BudgetLedger
+from hestia.agent.ratelimit import KeyPacer, RateLimitPolicy, shared_pacer
 from hestia.agent.rotation import RotatingModel
 from hestia.config import AgentProvider, Settings
+
+#: Observes (key, HTTP status, headers) for every provider response. Only
+#: rate-limit headers are read; the key is used in memory to match its pacer slot.
+ResponseObserver = Callable[[str, int, Any], None]
+
+
+def _observing_client(factory: Any, api_key: str, observe: ResponseObserver | None) -> Any:
+    """An SDK-default async HTTP client that reports each response's headers."""
+    if observe is None:
+        return None
+
+    async def on_response(response: Any) -> None:
+        observe(api_key, response.status_code, response.headers)
+
+    return factory(event_hooks={"response": [on_response]})
 
 
 class ProviderUnavailable(RuntimeError):
@@ -99,15 +115,21 @@ def provider_status(settings: Settings) -> ProviderStatus:
 class GroqAdapter:
     model_name: str
     timeout_seconds: float
+    observe: ResponseObserver | None = None
 
     def create_model(self, api_key: str):
-        from groq import AsyncGroq
+        from groq import AsyncGroq, DefaultAsyncHttpxClient
         from pydantic_ai.models.groq import GroqModel
         from pydantic_ai.providers.groq import GroqProvider
 
         # SDK defaults silently retry 429s. Disable that so *each* HTTP
         # attempt is accounted for by the outer run-wide request budget.
-        client = AsyncGroq(api_key=api_key, timeout=self.timeout_seconds, max_retries=0)
+        client = AsyncGroq(
+            api_key=api_key,
+            timeout=self.timeout_seconds,
+            max_retries=0,
+            http_client=_observing_client(DefaultAsyncHttpxClient, api_key, self.observe),
+        )
         return GroqModel(self.model_name, provider=GroqProvider(groq_client=client))
 
 
@@ -115,9 +137,10 @@ class GroqAdapter:
 class OpenRouterAdapter:
     model_name: str
     timeout_seconds: float
+    observe: ResponseObserver | None = None
 
     def create_model(self, api_key: str):
-        from openai import AsyncOpenAI
+        from openai import AsyncOpenAI, DefaultAsyncHttpxClient
         from pydantic_ai.models.openrouter import OpenRouterModel
         from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -126,8 +149,29 @@ class OpenRouterAdapter:
             base_url="https://openrouter.ai/api/v1",
             timeout=self.timeout_seconds,
             max_retries=0,
+            http_client=_observing_client(DefaultAsyncHttpxClient, api_key, self.observe),
         )
         return OpenRouterModel(self.model_name, provider=OpenRouterProvider(openai_client=client))
+
+
+def rate_limit_pacer(settings: Settings) -> KeyPacer | None:
+    """The process-shared pacer for this hosted provider/model/key set, if pacing."""
+    if (
+        not settings.agent_rate_limit_pacing
+        or settings.agent_provider in (None, AgentProvider.fixture)
+        or not settings.agent_keys
+    ):
+        return None
+    return shared_pacer(
+        settings.agent_provider.value,
+        settings.agent_model,
+        settings.agent_keys,
+        RateLimitPolicy(
+            tokens_per_minute=settings.agent_rate_limit_tokens_per_minute,
+            requests_per_minute=settings.agent_rate_limit_requests_per_minute,
+            max_wait_seconds=settings.agent_rate_limit_max_wait_seconds,
+        ),
+    )
 
 
 def build_model(
@@ -157,10 +201,15 @@ def build_model(
         return FunctionModel(_scripted(fixture_script))
 
     provider = settings.agent_provider
+    pacer = rate_limit_pacer(settings)
+    observe = pacer.observe if pacer is not None else None
+    timeout = settings.agent_request_timeout_seconds
     if provider is AgentProvider.groq:
-        adapter = GroqAdapter(settings.agent_model, settings.agent_request_timeout_seconds)
+        adapter: GroqAdapter | OpenRouterAdapter = GroqAdapter(
+            settings.agent_model, timeout, observe
+        )
     elif provider is AgentProvider.openrouter:
-        adapter = OpenRouterAdapter(settings.agent_model, settings.agent_request_timeout_seconds)
+        adapter = OpenRouterAdapter(settings.agent_model, timeout, observe)
     else:
         raise ProviderUnavailable(f"provider {provider!r} is not supported by this build")
     return RotatingModel(
@@ -168,6 +217,9 @@ def build_model(
         provider=provider.value,
         max_attempts=settings.agent_max_turns,
         before_attempt=ledger.check if ledger is not None else lambda: None,
+        pacer=pacer,
+        max_rate_limited=settings.agent_rate_limited_attempts,
+        remaining_seconds=ledger.remaining_seconds if ledger is not None else None,
     )
 
 
@@ -199,4 +251,5 @@ __all__ = [
     "ProviderUnavailable",
     "build_model",
     "provider_status",
+    "rate_limit_pacer",
 ]
