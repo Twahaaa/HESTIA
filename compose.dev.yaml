@@ -1,0 +1,17 @@
+services:
+  app:
+    ports: ["127.0.0.1:5173:5173"]
+    command: ["uvicorn", "hestia.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./src:/app/src:ro
+  frontend:
+    image: node:26.9.0-bookworm-slim
+    working_dir: /ui
+    command: ["sh", "-c", "npm ci && npm run dev -- --port 5173"]
+    network_mode: "service:app"
+    volumes:
+      - ./frontend:/ui
+      - hestia-node-modules:/ui/node_modules
+  # Vite and API share localhost so the same proxy works on host and in Docker.
+volumes:
+  hestia-node-modules:

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hestia-soc"
+version = "0.1.0"
+description = "Evidence-led SOC triage"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "fastapi==0.141.1", "uvicorn==0.53.0", "pydantic==2.13.5",
+  "pydantic-settings==2.15.0", "river==0.26.1", "pyarrow==25.0.1",
+  "python-dateutil==2.9.0.post0", "mcp==2.2.0",
+  "pydantic-ai-slim[groq,openrouter,retries]==2.48.0",
+]
+[project.scripts]
+hestia = "hestia.cli:main"
+[dependency-groups]
+dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "httpx==0.28.1", "ruff==0.16.8"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/hestia"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

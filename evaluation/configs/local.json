@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "split_manifests": [
+    "../../artifacts/preparation/h1-ait-splits.json",
+    "../../artifacts/preparation/h1-cam-splits.json",
+    "../../artifacts/preparation/h1-openssh-splits.json"
+  ],
+  "reference_index_path": "../../artifacts/knowledge/reference-index.json",
+  "labels_path": null,
+  "model_artifact_path": null,
+  "calibration_path": null,
+  "prompt_hash": null,
+  "provider": null,
+  "model": null,
+  "model_revision": null,
+  "seed": 42
+}

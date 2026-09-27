@@ -1,0 +1,22 @@
+name: foundation
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: '0.12.17'
+      - run: uv sync --locked
+      - run: uv run pytest -q
+      - run: uv run ruff check src tests scripts
+      - run: uv run ruff format --check src tests scripts
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '26.9.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci && npm run lint && npm test && npm run build
+        working-directory: frontend
+      - run: docker build -t hestia:test .

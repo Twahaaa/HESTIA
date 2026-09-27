@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "archive_md5": "76a24b4d9a6164d543fb275f89773260",
+  "train_fraction": 0.6,
+  "validation_fraction": 0.2,
+  "normal_alert_quantile": 0.95
+}

@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    ports: ["127.0.0.1:8000:8000"]
+    # The project .env is optional for the fixture demo. When present it is
+    # passed into the container, including the selected provider's key(s).
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/app/data:ro
+      - hestia-artifacts:/app/artifacts
+    environment:
+      # Optional demo pacing for fixture runs only; 0 means no delay.
+      HESTIA_AGENT_FIXTURE_PACE_SECONDS: ${HESTIA_AGENT_FIXTURE_PACE_SECONDS:-0}
+    init: true
+    security_opt: ["no-new-privileges:true"]
+volumes:
+  hestia-artifacts:

@@ -1,0 +1,13 @@
+.git
+.planning
+.venv
+**/__pycache__
+**/node_modules
+frontend/dist
+data
+artifacts
+.env
+.pytest_cache
+graphify-out
+frontend/test-results
+frontend/playwright-report
